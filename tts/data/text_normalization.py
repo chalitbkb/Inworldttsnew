@@ -10,12 +10,24 @@ from nemo_text_processing.text_normalization import normalize
 base_logging.getLogger("NeMo-text-processing").setLevel(base_logging.CRITICAL)
 
 # Language codes for text normalization.
+# Language codes for text normalization.
 _ENGLISH = "en"
 _JAPANESE = "ja"
 _CHINESE = "zh"
 _SPANISH = "es"
 _FRENCH = "fr"
 _GERMAN = "de"
+_THAI = "th"  # Adding Thai language identifier
+
+# Try to import pythainlp for Thai normalization
+try:
+    from pythainlp.util import normalize as thai_normalize
+    _THAI_SUPPORTED = True
+except ImportError:
+    base_logging.warning(
+        "pythainlp is not installed. "
+        "Thai text normalization will act as a fallback No-Op wrapper."
+    )
 
 
 class TextNormalizer(metaclass=abc.ABCMeta):
@@ -48,6 +60,66 @@ class NoOpTextNormalizer(TextNormalizer):
 
     def normalize_with_language(self, text: str, language: str) -> str:
         return text
+
+
+class ThaiTextNormalizer(TextNormalizer):
+    """Text normalizer for Thai language using PyThaiNLP."""
+
+    def __init__(self):
+        super().__init__()
+        self._supported_languages = [_THAI]
+
+    def get_supported_languages(self) -> list[str]:
+        return self._supported_languages
+
+    def normalize(self, text: str) -> str:
+        if _THAI_SUPPORTED:
+            # use pythainlp to clean up duplicate vowels/tones
+            return thai_normalize(text)
+        return text
+
+    def normalize_with_language(self, text: str, language: str) -> str:
+        if language == _THAI:
+            return self.normalize(text)
+        return text
+
+
+class MultiLingualTextNormalizer(TextNormalizer):
+    """Router text normalizer for dispatching to specific normalizers."""
+
+    def __init__(self):
+        super().__init__()
+        self.nemo_normalizer = NemoTextNormalizer()
+        self.thai_normalizer = ThaiTextNormalizer()
+
+        self._supported_languages = (
+            self.nemo_normalizer.get_supported_languages()
+            + self.thai_normalizer.get_supported_languages()
+        )
+
+    def get_supported_languages(self) -> list[str]:
+        return self._supported_languages
+
+    def normalize(self, text: str) -> str:
+        # Check through lang detector used by nemo
+        try:
+            if self.nemo_normalizer.lang_detector is None:
+                self.nemo_normalizer.init_lang_detector()
+            self.nemo_normalizer.lang_detector.detect_language_of(text)
+
+            # Note: lingua currently does not support Thai language natively,
+            # so dynamically detecting Thai text using lingua will often fall to
+            # English or unclassified. If multi-lingual inference is needed,
+            # a better language detector might be necessary.
+
+            return self.nemo_normalizer.normalize(text)
+        except Exception:
+            return text
+
+    def normalize_with_language(self, text: str, language: str) -> str:
+        if language == _THAI:
+            return self.thai_normalizer.normalize_with_language(text, language)
+        return self.nemo_normalizer.normalize_with_language(text, language)
 
 
 class NemoTextNormalizer(TextNormalizer):
@@ -128,8 +200,8 @@ class NemoTextNormalizer(TextNormalizer):
 
 
 def create_text_normalizer(enable_text_normalization: bool) -> TextNormalizer:
-    """Create text normalizer for NemoNormalizer."""
+    """Create text normalizer for all languages."""
     if enable_text_normalization:
-        return NemoTextNormalizer()
+        return MultiLingualTextNormalizer()
     else:
         return NoOpTextNormalizer()

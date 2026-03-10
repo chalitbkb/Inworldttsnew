@@ -41,7 +41,10 @@
     },
     "dataset": {
         "randomize_slider": 0,
-        "allowed_languages": [],
+        "allowed_languages": [
+            "th", 
+            "en"
+        ],
         "min_dnsmos_score": 0,
         "min_sample_rate": 0,
         "enable_rlhf_training": false
